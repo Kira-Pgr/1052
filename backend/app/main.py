@@ -440,6 +440,7 @@ async def handle_telegram_message(text: str, user_name: str):
             conversation.messages.append(assistant_message)
             conversation.updated_at = assistant_message.timestamp
             save_conversation(conversation)
+            await telegram_bot.send_message(full_reply)
     except Exception as e:
         logger.error(f"Error handling telegram message: {e}")
         await telegram_bot.send_message(f"抱歉，处理消息时出错: {str(e)}")
