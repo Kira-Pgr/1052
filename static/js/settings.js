@@ -19,6 +19,7 @@ async function loadSettings() {
       $("temp-val").textContent = cfg.temperature;
     }
     if (cfg.max_tokens != null) $("max-tokens").value = cfg.max_tokens;
+    if (cfg.evolution_interval != null) $("evolution-interval").value = cfg.evolution_interval;
   } catch {
     // 服务未就绪，忽略
   }
@@ -36,6 +37,7 @@ async function saveSettings() {
     model,
     temperature: parseFloat($("temperature").value),
     max_tokens:  parseInt($("max-tokens").value),
+    evolution_interval: parseInt($("evolution-interval").value),
   };
   // 只有用户填了新 key 才上传
   if (apiKey) body.api_key = apiKey;

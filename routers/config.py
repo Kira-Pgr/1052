@@ -19,11 +19,12 @@ class MCPConfigUpdate(BaseModel):
 
 
 class AppConfigUpdate(BaseModel):
-    api_key:     Optional[str]   = None
-    base_url:    Optional[str]   = None
-    model:       Optional[str]   = None
-    temperature: Optional[float] = None
-    max_tokens:  Optional[int]   = None
+    api_key:          Optional[str]   = None
+    base_url:         Optional[str]   = None
+    model:            Optional[str]   = None
+    temperature:      Optional[float] = None
+    max_tokens:       Optional[int]   = None
+    evolution_interval: Optional[int]  = None  # 进化模式间隔（秒）
 
 
 # ─── System Prompt ────────────────────────────────────────────────
@@ -74,6 +75,7 @@ async def get_app_config():
         "model":        cfg.get("model",       "gpt-4o-mini"),
         "temperature":  cfg.get("temperature", 0.7),
         "max_tokens":   cfg.get("max_tokens",  32768),
+        "evolution_interval": cfg.get("evolution_interval", 1800),  # 默认30分钟
     }
 
 

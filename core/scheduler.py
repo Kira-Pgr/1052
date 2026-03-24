@@ -5,7 +5,7 @@ TaskScheduler — 定时任务管理器
   daily:09:00          每天 09:00 执行
   interval:30          每 30 分钟执行一次
   cron:0 9 * * 1       标准 5 字段 Cron 表达式（需安装 croniter）
-  once:2024-01-01T09:00:00  一次性任务，执行后自动禁用
+  once:2024-01-01T09:00:00  一次性任务，执行后自动删除
 
 上下文文件：data/tasks/{task_id}/context.txt  (追加写入)
 任务配置：  data/tasks.json
@@ -221,14 +221,17 @@ class TaskScheduler:
         task["last_run"]  = now.isoformat()
         task["run_count"] = run_no
         task["running"]   = False  # 清除运行中标记
+
         if task["schedule"].startswith("once:"):
-            task["enabled"]  = False
-            task["next_run"] = None
+            # 一次性任务执行后自动删除
+            task_id = task["id"]
+            del self._tasks[task_id]
+            print(f"[Scheduler] ✓ 一次性任务 '{name}' 执行完毕，已自动删除")
         else:
             task["next_run"] = self._next_run(task["schedule"])
-        self._save()
+            self._save()
+            print(f"[Scheduler] ✓ 任务 '{name}' 完成")
 
-        print(f"[Scheduler] ✓ 任务 '{name}' 完成")
         return result
 
     async def _send_to_user(self, task: dict, message: str):

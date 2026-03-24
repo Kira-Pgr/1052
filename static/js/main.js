@@ -46,6 +46,12 @@ userInput.addEventListener("keydown", e => {
       clearChat();
       return;
     }
+    if (text === "/compress") {
+      userInput.value = "";
+      autoResizeTextarea();
+      compressContext();
+      return;
+    }
     if (text === "/1052" || text === "/1052菜单") {
       userInput.value = "";
       autoResizeTextarea();
@@ -69,6 +75,8 @@ document.querySelectorAll(".cmd-item[data-cmd]").forEach(el => {
   el.addEventListener("click", () => {
     if (el.dataset.cmd === "/new") {
       clearChat();
+    } else if (el.dataset.cmd === "/compress") {
+      compressContext();
     } else if (el.dataset.cmd === "/1052" || el.dataset.cmd === "/1052菜单") {
       showCommandMenu();
     } else if (el.dataset.cmd === "/1052进化") {
@@ -82,6 +90,7 @@ function showCommandMenu() {
   const menuText = `📋 <b>1052 可用命令</b>
 
 <code>/new</code> - 新建对话，清空上下文
+<code>/compress</code> - 🗜️ 压缩对话历史（AI 摘要）
 <code>/1052</code> - 显示命令菜单
 <code>/1052进化</code> - 开启进化模式（自主思考）
 <code>/help</code> - 查看帮助
@@ -163,6 +172,38 @@ async function toggleEvolution() {
 }
 
 $("evolution-stop-btn")?.addEventListener("click", toggleEvolution);
+
+// ─── Compress context ─────────────────────────────────────────────
+async function compressContext() {
+  appendMessage("ai", "🔄 <b>正在压缩上下文...</b>\n\n"
+    + "📋 即将进行以下操作：\n"
+    + "• 分析并理解对话历史\n"
+    + "• 提取关键信息和要点\n"
+    + "• 生成压缩摘要\n\n"
+    + "⏱️ 预计需要 <b>1-2 分钟</b>，请稍候...\n\n"
+    + "💡 压缩期间您可以继续使用，任务会在后台完成。");
+
+  try {
+    const res = await fetch("/im/compress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "web", user_id: "web_user" })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      appendMessage("ai", "✅ <b>上下文压缩完成！</b>\n\n"
+        + `📊 <b>压缩结果：</b>\n`
+        + `• 原始消息数：${data.original_count} 条\n`
+        + `• 压缩后：1 条摘要 + ${data.preserve_count} 条最近对话\n`
+        + `• 压缩比：约 ${data.compress_ratio}%\n\n`
+        + "🔄 您可以继续对话，上下文已精简。");
+    } else {
+      appendMessage("ai", "❌ <b>压缩失败：</b> " + (data.message || "未知错误"));
+    }
+  } catch (e) {
+    appendMessage("ai", "❌ <b>压缩请求失败：</b> " + e.message);
+  }
+}
 
 // ─── Tab switching ────────────────────────────────────────────────
 document.querySelectorAll(".tab-btn").forEach(btn => {

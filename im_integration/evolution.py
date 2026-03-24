@@ -9,7 +9,17 @@ from typing import Optional, Callable, AsyncGenerator
 from dataclasses import dataclass, asdict
 
 EVOLUTION_LOG_DIR = Path("data/evolution_logs")
-EVOLUTION_INTERVAL = 1800  # 30分钟
+DEFAULT_EVOLUTION_INTERVAL = 1800  # 默认30分钟
+
+
+def get_evolution_interval() -> int:
+    """从配置读取进化间隔"""
+    try:
+        from core.config import load_config
+        cfg = load_config()
+        return cfg.get("evolution_interval", DEFAULT_EVOLUTION_INTERVAL)
+    except:
+        return DEFAULT_EVOLUTION_INTERVAL
 
 
 @dataclass
@@ -168,8 +178,10 @@ class EvolutionManager:
 
         while self._active:
             try:
-                # 等待30分钟
-                await asyncio.sleep(EVOLUTION_INTERVAL)
+                # 读取配置的间隔
+                interval = get_evolution_interval()
+                self._log("[系统]", f"等待 {interval} 秒后执行下一次进化")
+                await asyncio.sleep(interval)
 
                 if not self._active:
                     break
@@ -220,6 +232,41 @@ class EvolutionManager:
                         text=f"🔄 [进化结果]\n\n{message}",
                         parse_mode="HTML"
                     )
+            except Exception as e:
+                self._log("[发送错误]", str(e))
+
+        elif self._platform == "lark" and self._app_state:
+            # 飞书平台
+            try:
+                im = self._app_state.im_manager
+                if im and im.lark and im.lark.client:
+                    card = {
+                        "config": {"wide_screen_mode": True},
+                        "header": {
+                            "title": {"tag": "plain_text", "content": "进化结果"},
+                            "template": "blue"
+                        },
+                        "elements": [
+                            {
+                                "tag": "div",
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": message
+                                }
+                            }
+                        ]
+                    }
+                    from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
+                    body = CreateMessageRequestBody.builder() \
+                        .receive_id(self._user_id) \
+                        .msg_type("interactive") \
+                        .content(json.dumps(card, ensure_ascii=False)) \
+                        .build()
+                    request = CreateMessageRequest.builder() \
+                        .receive_id_type("chat_id") \
+                        .request_body(body) \
+                        .build()
+                    im.lark.client.im.v1.message.create(request)
             except Exception as e:
                 self._log("[发送错误]", str(e))
 

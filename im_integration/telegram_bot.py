@@ -18,7 +18,7 @@ try:
 except ImportError:
     TELEGRAM_AVAILABLE = False
 
-from core.config import DATA_DIR
+from core.config import DATA_DIR, load_conversation, save_conversation
 from .evolution import evolution_manager
 
 # 文件存储目录
@@ -86,8 +86,16 @@ def markdown_to_html(text: str) -> str:
     return text
 
 
+def strip_html_tags(text: str) -> str:
+    """移除所有 HTML 标签，保留纯文本（用于 parse error 的 fallback）"""
+    return re.sub(r'</?[a-zA-Z][^>]*>', '', text)
+
+
 class TelegramBot:
     """Telegram 机器人，支持流式回复和文件处理"""
+
+    # 打断管理：user_id -> 取消标志（True=需要取消当前任务）
+    _cancel_flags: dict[int, bool] = {}
 
     def __init__(self, token: str, chat_handler: Optional[Callable] = None):
         self.token = token
@@ -128,6 +136,7 @@ class TelegramBot:
             self.app.add_handler(CommandHandler("1052", self._cmd_menu))  # 命令菜单
             self.app.add_handler(CommandHandler("help", self._cmd_help))
             self.app.add_handler(CommandHandler("new", self._cmd_new))
+            self.app.add_handler(CommandHandler("compress", self._cmd_compress))  # 压缩上下文
             self.app.add_handler(CommandHandler("evolve", self._cmd_evolution))
             self.app.add_handler(CallbackQueryHandler(self._callback_handler))
 
@@ -157,14 +166,32 @@ class TelegramBot:
     async def stop(self):
         """停止机器人"""
         if self.app and self._enabled:
+            # 先取消 polling 任务
             if self._task:
                 self._task.cancel()
                 try:
                     await self._task
                 except asyncio.CancelledError:
                     pass
-            await self.app.stop()
-            await self.app.shutdown()
+                self._task = None
+
+            # 先调用 app.stop()（会正确停止 updater 和所有 handlers）
+            try:
+                await self.app.stop()
+            except Exception as e:
+                print(f"[Telegram] app.stop 异常: {e}")
+
+            # 再调用 shutdown
+            try:
+                await self.app.shutdown()
+            except RuntimeError as e:
+                # "This Updater is still running!" - 可以忽略，因为 stop() 已经处理了
+                if "still running" not in str(e):
+                    raise
+                print(f"[Telegram] updater 仍在运行，已通过 stop() 处理")
+            except Exception as e:
+                print(f"[Telegram] app.shutdown 异常: {e}")
+
             self._enabled = False
             print("[Telegram] 机器人已停止")
 
@@ -183,6 +210,7 @@ class TelegramBot:
         menu_text = (
             "📋 <b>1052 可用命令</b>\n\n"
             "<code>/new</code> - 新建对话，清空上下文\n"
+            "<code>/compress</code> - 🗜️ 压缩对话历史（AI 摘要）\n"
             "<code>/evolve</code> - 开启进化模式（自主思考）\n"
             "<code>/help</code> - 查看帮助\n\n"
             "直接发送消息与我对话"
@@ -197,6 +225,7 @@ class TelegramBot:
             "• 支持流式输出，实时显示回复\n"
             "• 支持发送图片、文件\n"
             "• /new 清空当前对话历史\n"
+            "• /compress 🗜️ 压缩对话历史（AI 摘要）\n"
             "• /evolve 开启进化模式（自主思考）\n\n"
             "来自 1052 AI Agent",
             parse_mode="HTML"
@@ -213,6 +242,175 @@ class TelegramBot:
             conv_file.unlink()
 
         await update.message.reply_text("✅ 已新建对话，历史已清空", parse_mode="HTML")
+
+    async def _cmd_compress(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/compress 命令 - 压缩上下文"""
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+
+        # 启动后台压缩任务
+        asyncio.create_task(self._compress_context_task(str(user_id), chat_id))
+
+    async def _compress_context_task(self, user_id: str, chat_id: int):
+        """后台压缩上下文任务"""
+        try:
+            bot = self.app.bot
+
+            # 1. 发送压缩开始提示
+            await bot.send_message(
+                chat_id=chat_id,
+                text="🔄 <b>正在压缩上下文...</b>\n\n"
+                     "📋 即将进行以下操作：\n"
+                     "• 分析并理解对话历史\n"
+                     "• 提取关键信息和要点\n"
+                     "• 生成压缩摘要\n\n"
+                     "⏱️ 预计需要 <b>1-2 分钟</b>，请稍候...\n\n"
+                     "💡 压缩期间您可以继续使用，任务会在后台完成。",
+                parse_mode="HTML"
+            )
+
+            # 2. 加载对话历史
+            messages = load_conversation(platform="telegram", user_id=user_id)
+
+            if len(messages) < 10:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="📝 <b>上下文较短，无需压缩</b>\n\n"
+                         "当前对话历史较少（少于 10 条），无需压缩。\n"
+                         "继续对话直到历史积累较多后再试。",
+                    parse_mode="HTML"
+                )
+                return
+
+            # 3. 保留最近的消息
+            recent_user_idx = -1
+            recent_asst_idx = -1
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i].get("role") == "user" and recent_user_idx == -1:
+                    recent_user_idx = i
+                elif messages[i].get("role") == "assistant" and recent_asst_idx == -1:
+                    recent_asst_idx = i
+                if recent_user_idx != -1 and recent_asst_idx != -1:
+                    break
+
+            preserve_count = max(recent_user_idx, recent_asst_idx) + 1 if recent_user_idx != -1 and recent_asst_idx != -1 else len(messages)
+
+            # 4. 调用 AI 进行摘要压缩
+            old_messages = messages[:-preserve_count] if preserve_count < len(messages) else []
+            compress_prompt = self._build_compress_prompt(old_messages)
+
+            summary_done = False
+            summary_text = ""
+
+            if compress_prompt and self.chat_handler:
+                try:
+                    summarize_messages = [
+                        {"role": "system", "content": "你是一个对话历史压缩助手。你的任务是将冗长的对话历史压缩成简洁的摘要，保留关键信息和要点。"},
+                        {"role": "user", "content": compress_prompt}
+                    ]
+
+                    async for chunk in self.chat_handler(summarize_messages):
+                        if chunk.get("type") == "delta":
+                            summary_text += chunk.get("content", "")
+
+                    if summary_text:
+                        summary_text = remove_thinking_tags(summary_text).strip()
+                        summary_done = True
+                except Exception as e:
+                    print(f"[Telegram] 摘要生成失败: {e}")
+
+            # 5. 更新对话历史
+            if summary_done and summary_text:
+                new_messages = []
+                new_messages.append({
+                    "role": "assistant",
+                    "content": f"【上下文压缩摘要】\n\n{summary_text[:2000]}",
+                    "_meta": {"platform": "telegram", "user_id": user_id, "compressed": True}
+                })
+                if preserve_count > 0:
+                    new_messages.extend(messages[-preserve_count:])
+
+                # 保存压缩后的对话
+                self._save_compressed_conversation(user_id, new_messages)
+
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="✅ <b>上下文压缩完成！</b>\n\n"
+                         f"📊 <b>压缩结果：</b>\n"
+                         f"• 原始消息数：{len(messages)} 条\n"
+                         f"• 压缩后：1 条摘要 + {preserve_count} 条最近对话\n"
+                         f"• 压缩比：约 {int((1 - len(new_messages)/len(messages))*100)}%\n\n"
+                         "🔄 您可以继续对话，上下文已精简。",
+                    parse_mode="HTML"
+                )
+            else:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="⏰ <b>压缩任务已超时</b>\n\n"
+                         "由于摘要生成超时，上下文未被压缩。\n"
+                         "您可以稍后重试，或使用 /new 新建对话。",
+                    parse_mode="HTML"
+                )
+
+        except Exception as e:
+            print(f"[Telegram] 压缩上下文异常: {e}")
+            await self.app.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ <b>压缩失败</b>：{str(e)[:100]}",
+                parse_mode="HTML"
+            )
+
+    def _build_compress_prompt(self, messages: list) -> str:
+        """构建压缩提示"""
+        if not messages:
+            return ""
+
+        formatted = []
+        for msg in messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if content:
+                role_name = {"user": "用户", "assistant": "助手", "system": "系统"}.get(role, role)
+                formatted.append(f"<b>{role_name}：</b>\n{content[:500]}")
+
+        if not formatted:
+            return ""
+
+        separator = "=" * 50
+        prompt = f"""请将以下对话历史压缩成简洁的摘要，保留关键信息和要点：
+
+---
+{separator.join(formatted)}
+---
+
+压缩要求：
+1. 提取对话的主要话题和目标
+2. 记录重要的结论和决定
+3. 保留关键的用户偏好和信息
+4. 使用简洁的语言，不超过 500 字
+
+请直接输出压缩后的摘要，不需要解释。"""
+
+        return prompt
+
+    def _save_compressed_conversation(self, user_id: str, messages: list):
+        """保存压缩后的对话历史"""
+        conv_file = DATA_DIR / "conversation.json"
+        try:
+            all_messages = []
+            if conv_file.exists():
+                all_messages = json.loads(conv_file.read_text(encoding="utf-8"))
+
+            all_messages = [m for m in all_messages
+                          if m.get("_meta", {}).get("user_id") != user_id
+                          or m.get("_meta", {}).get("platform") != "telegram"]
+
+            all_messages.extend(messages)
+            all_messages = all_messages[-200:]
+
+            conv_file.write_text(json.dumps(all_messages, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            print(f"[Telegram] 保存压缩对话失败: {e}")
 
     async def _cmd_evolution(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/evolve 命令 - 开启进化模式"""
@@ -245,17 +443,28 @@ class TelegramBot:
 
     async def _handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理文字消息"""
+        user_id = update.effective_user.id
+
         # 进化模式下，任何消息都退出进化模式
         if evolution_manager.active:
             await self._exit_evolution_mode(context.bot, update.effective_chat.id)
             return
+
+        # 设置取消标志，打断当前处理
+        self._cancel_flags[user_id] = True
+
         await self._process_message(update, context, message_text=update.message.text, message_type="text")
 
     async def _handle_photo_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理图片消息"""
+        user_id = update.effective_user.id
         if evolution_manager.active:
             await self._exit_evolution_mode(context.bot, update.effective_chat.id)
             return
+
+        # 设置取消标志，打断当前处理
+        self._cancel_flags[user_id] = True
+
         # 获取最大分辨率的图片
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
@@ -274,9 +483,14 @@ class TelegramBot:
 
     async def _handle_document_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理文档消息"""
+        user_id = update.effective_user.id
         if evolution_manager.active:
             await self._exit_evolution_mode(context.bot, update.effective_chat.id)
             return
+
+        # 设置取消标志，打断当前处理
+        self._cancel_flags[user_id] = True
+
         doc = update.message.document
         file = await context.bot.get_file(doc.file_id)
 
@@ -291,9 +505,14 @@ class TelegramBot:
 
     async def _handle_audio_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理音频消息"""
+        user_id = update.effective_user.id
         if evolution_manager.active:
             await self._exit_evolution_mode(context.bot, update.effective_chat.id)
             return
+
+        # 设置取消标志，打断当前处理
+        self._cancel_flags[user_id] = True
+
         audio = update.message.audio
         file = await context.bot.get_file(audio.file_id)
 
@@ -307,9 +526,14 @@ class TelegramBot:
 
     async def _handle_video_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理视频消息"""
+        user_id = update.effective_user.id
         if evolution_manager.active:
             await self._exit_evolution_mode(context.bot, update.effective_chat.id)
             return
+
+        # 设置取消标志，打断当前处理
+        self._cancel_flags[user_id] = True
+
         video = update.message.video
         file = await context.bot.get_file(video.file_id)
 
@@ -323,6 +547,13 @@ class TelegramBot:
 
     async def _handle_voice_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理语音消息"""
+        user_id = update.effective_user.id
+        if evolution_manager.active:
+            await self._exit_evolution_mode(context.bot, update.effective_chat.id)
+            return
+
+        # 设置取消标志，打断当前处理
+        self._cancel_flags[user_id] = True
         if evolution_manager.active:
             await self._exit_evolution_mode(context.bot, update.effective_chat.id)
             return
@@ -372,6 +603,12 @@ class TelegramBot:
         # 创建初始回复消息
         reply_msg = await update.message.reply_text("💭 思考中...", parse_mode="HTML")
 
+        # 检查是否在开始前就被打断了（用户可能发了多条消息）
+        if self._cancel_flags.get(user_id, False):
+            self._cancel_flags[user_id] = False
+            await self._edit_with_retry(reply_msg, "⚠️ 已被新消息打断", parse_mode="HTML")
+            return
+
         # 流式处理
         full_response = ""
         last_update_len = 0
@@ -380,6 +617,12 @@ class TelegramBot:
 
         try:
             async for chunk in self.chat_handler(messages):
+                # 每次循环开始时检查打断标志
+                if self._cancel_flags.get(user_id, False):
+                    self._cancel_flags[user_id] = False
+                    await self._edit_with_retry(reply_msg, "⚠️ 已被新消息打断", parse_mode="HTML")
+                    return
+
                 chunk_type = chunk.get("type")
                 print(f"[TG Bot] 收到 chunk: type={chunk_type}, content={str(chunk)[:200]}")
 
@@ -407,6 +650,12 @@ class TelegramBot:
                     tool_msg = f"{display_text}\n\n🔧 使用工具: {tool_name}..."
                     await self._edit_with_retry(reply_msg, tool_msg, parse_mode="HTML")
 
+                    # 工具调用后检查打断
+                    if self._cancel_flags.get(user_id, False):
+                        self._cancel_flags[user_id] = False
+                        await self._edit_with_retry(reply_msg, "⚠️ 已被新消息打断", parse_mode="HTML")
+                        return
+
                 elif chunk_type == "tool_result":
                     # 工具结果
                     result_content = str(chunk.get("result", ""))
@@ -423,6 +672,12 @@ class TelegramBot:
                     thinking_msg = display_text + "\n\n💭 继续思考中..."
                     await self._edit_with_retry(reply_msg, thinking_msg, parse_mode="HTML")
                     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+                    # 工具结果后检查打断
+                    if self._cancel_flags.get(user_id, False):
+                        self._cancel_flags[user_id] = False
+                        await self._edit_with_retry(reply_msg, "⚠️ 已被新消息打断", parse_mode="HTML")
+                        return
 
                 elif chunk_type == "file":
                     # AI 返回了文件，需要发送给用户
@@ -510,20 +765,13 @@ class TelegramBot:
             await self._edit_with_retry(reply_msg, f"❌ 处理失败: {str(e)}", parse_mode="HTML")
 
     def _load_conversation(self, user_id: int) -> list:
-        """加载用户对话历史"""
-        conv_file = DATA_DIR / "telegram_conv" / f"{user_id}.json"
-        if conv_file.exists():
-            try:
-                return json.loads(conv_file.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-        return []
+        """加载用户对话历史（统一会话）"""
+        # 加载所有平台的对话历史，筛选出 Telegram 该用户的
+        return load_conversation(platform="telegram", user_id=str(user_id))
 
     def _save_conversation(self, user_id: int, messages: list):
-        """保存用户对话历史"""
-        conv_file = DATA_DIR / "telegram_conv" / f"{user_id}.json"
-        conv_file.parent.mkdir(parents=True, exist_ok=True)
-        conv_file.write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
+        """保存用户对话历史到统一会话"""
+        save_conversation(messages, platform="telegram", user_id=str(user_id))
 
     async def _send_local_file(self, bot, chat_id: int, file_path: str, caption: str = ""):
         """
@@ -580,7 +828,7 @@ class TelegramBot:
 
     async def _edit_with_retry(self, message, text: str, parse_mode: str = None, max_retries: int = 3) -> bool:
         """
-        带重试的 edit_text，支持消息过长时自动截断
+        带重试的 edit_text，支持消息过长时自动截断和 parse error 时降级
 
         Returns:
             True if successful, False otherwise
@@ -613,6 +861,21 @@ class TelegramBot:
                         return True
                     except:
                         return False
+
+                # 检查是否是 parse error（标签不匹配等）
+                if 'parse' in error_str or 'entity' in error_str or 'unmatched' in error_str or 'end tag' in error_str:
+                    print(f"[TG Bot] edit_text parse error，尝试降级为纯文本: {e}")
+                    # 降级为纯文本（移除所有 HTML 标签）
+                    plain_text = strip_html_tags(text)
+                    if len(plain_text) > MAX_MSG_LEN:
+                        plain_text = plain_text[:MAX_MSG_LEN - 20] + "\n...(内容过长已截断)"
+                    try:
+                        await message.edit_text(plain_text, parse_mode=None)
+                        return True
+                    except Exception as e2:
+                        print(f"[TG Bot] 降级为纯文本也失败: {e2}")
+                        return False
+
                 if any(kw in error_str for kw in ['timeout', 'network', 'connection', 'read', 'write', 'httpx', 'retry']):
                     print(f"[TG Bot] edit_text 重试 ({attempt + 1}/{max_retries}): {e}")
                     if attempt < max_retries - 1:
@@ -628,12 +891,18 @@ class TelegramBot:
 
     async def _send_with_retry(self, chat_id: int, text: str, parse_mode: str = None, max_retries: int = 3) -> bool:
         """
-        带重试的 send_message
+        带重试的 send_message，支持 parse error 时降级
 
         Returns:
             True if successful, False otherwise
         """
         bot = self.app.bot
+        MAX_MSG_LEN = 4096
+
+        # 如果消息过长，截断
+        if len(text) > MAX_MSG_LEN:
+            text = text[:MAX_MSG_LEN - 20] + "\n...(内容过长已截断)"
+
         for attempt in range(max_retries):
             try:
                 if parse_mode:
@@ -643,6 +912,18 @@ class TelegramBot:
                 return True
             except Exception as e:
                 error_str = str(e).lower()
+
+                # 检查是否是 parse error
+                if 'parse' in error_str or 'entity' in error_str or 'unmatched' in error_str or 'end tag' in error_str:
+                    print(f"[TG Bot] send_message parse error，尝试降级为纯文本: {e}")
+                    plain_text = strip_html_tags(text)
+                    try:
+                        await bot.send_message(chat_id=chat_id, text=plain_text, parse_mode=None)
+                        return True
+                    except Exception as e2:
+                        print(f"[TG Bot] 降级为纯文本也失败: {e2}")
+                        return False
+
                 if any(kw in error_str for kw in ['timeout', 'network', 'connection', 'read', 'write', 'httpx', 'retry']):
                     print(f"[TG Bot] send_message 重试 ({attempt + 1}/{max_retries}): {e}")
                     if attempt < max_retries - 1:

@@ -38,6 +38,10 @@
         <code>/new</code>
         <span class="cmd-desc">新建对话，清空上下文</span>
       </div>
+      <div class="cmd-item" data-cmd="/compress">
+        <code>/compress</code>
+        <span class="cmd-desc">🗜️ 压缩对话历史（AI 摘要）</span>
+      </div>
       <div class="cmd-item" id="evolution-cmd" data-cmd="/1052进化">
         <code>/1052进化</code>
         <span class="cmd-desc">开启自主进化模式</span>
@@ -114,6 +118,12 @@
     <div class="settings-group">
       <label>最大 Token 数</label>
       <input type="number" id="max-tokens" value="32768" min="256" max="32768" />
+    </div>
+
+    <div class="settings-group">
+      <label>进化模式间隔（秒）</label>
+      <input type="number" id="evolution-interval" value="1800" min="60" max="86400" />
+      <div style="font-size:10px;color:#6b7280;margin-top:4px">进化模式执行任务的时间间隔，默认1800秒（30分钟）</div>
     </div>
 
     <button id="save-settings-btn">保存设置</button>

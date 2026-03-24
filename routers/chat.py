@@ -190,13 +190,15 @@ async def chat_stream(req: ChatRequest, request: Request):
                     history = [{"role": m.role, "content": m.content} for m in req.messages]
                     if total_assistant_text:
                         history.append({"role": "assistant", "content": total_assistant_text})
-                    save_conversation(history)
+                    save_conversation(history, platform="web", user_id=req.user_id)
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     break
 
                 # 每轮工具调用前先保存一次，防止意外中断丢失记录
                 save_conversation(
-                    [{"role": m.role, "content": m.content} for m in req.messages]
+                    [{"role": m.role, "content": m.content} for m in req.messages],
+                    platform="web",
+                    user_id=req.user_id
                 )
 
                 # ── Execute tool calls ──────────────────────────────
@@ -260,7 +262,7 @@ async def chat_stream(req: ChatRequest, request: Request):
 
         except Exception as e:
             try:
-                save_conversation([{"role": m.role, "content": m.content} for m in req.messages])
+                save_conversation([{"role": m.role, "content": m.content} for m in req.messages], platform="web", user_id=req.user_id)
             except Exception:
                 pass
             yield f"data: {json.dumps({'type': 'error', 'content': _fmt_api_error(e)}, ensure_ascii=False)}\n\n"
