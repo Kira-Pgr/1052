@@ -226,3 +226,9 @@ export const IconOrchestration = (p: Props) => (
     <path d="M18 9v3l-6 3" />
   </svg>
 )
+
+export const IconStop = (p: Props) => (
+  <svg {...base(p)}>
+    <rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none" />
+  </svg>
+)
