@@ -7592,14 +7592,24 @@ button.social-platform-card:hover {
 
 /* Orchestration Log Panel */
 .orch-log-panel {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
   border: 1px solid var(--hairline);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
   background: var(--surface-0);
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
-  max-height: 50vh;
+  max-height: 60vh;
   overflow: hidden;
+  box-shadow: var(--sh-3);
+  animation: orch-log-slide-up 0.2s var(--ease);
+}
+@keyframes orch-log-slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
 }
 
 .orch-log-header {

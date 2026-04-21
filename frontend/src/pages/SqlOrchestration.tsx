@@ -169,7 +169,7 @@ export default function SqlOrchestration() {
   if (loading) return <div className="page"><p>加载中...</p></div>
 
   if (editing) return (
-    <div className="page orch-editor-page" onContextMenu={handleCanvasContextMenu}>
+    <div className="page orch-editor-page" style={{ position: 'relative' }} onContextMenu={handleCanvasContextMenu}>
       <Toolbar
         name={editing.name}
         saving={saving}
