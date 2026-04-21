@@ -1,5 +1,19 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import type { OrchestrationExecution, LogEntry } from '../../api/orchestration'
+
+const HEIGHT_STORAGE_KEY = 'orch-log-panel-height'
+const DEFAULT_HEIGHT = 320
+const MIN_HEIGHT = 120
+
+function readStoredHeight(): number {
+  try {
+    const raw = localStorage.getItem(HEIGHT_STORAGE_KEY)
+    const n = raw ? Number(raw) : NaN
+    return Number.isFinite(n) && n >= MIN_HEIGHT ? n : DEFAULT_HEIGHT
+  } catch {
+    return DEFAULT_HEIGHT
+  }
+}
 
 function LogEntryCard({ log }: { log: LogEntry }) {
   const [expanded, setExpanded] = useState(true)
@@ -53,15 +67,53 @@ export function LogPanel({
 }: {
   execution: OrchestrationExecution | null; collapsed: boolean; onToggle: () => void
 }) {
-  const ref = useRef<HTMLDivElement>(null)
+  const [height, setHeight] = useState<number>(readStoredHeight)
+  const dragRef = useRef<{ startY: number; startH: number } | null>(null)
+
   useEffect(() => {
-    if (execution && !collapsed && ref.current) ref.current.scrollIntoView({ behavior: 'smooth' })
-  }, [execution, collapsed])
+    try { localStorage.setItem(HEIGHT_STORAGE_KEY, String(height)) } catch { /* ignore */ }
+  }, [height])
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragRef.current = { startY: e.clientY, startH: height }
+    const maxH = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.8))
+
+    const onMove = (ev: MouseEvent) => {
+      const st = dragRef.current
+      if (!st) return
+      const dy = st.startY - ev.clientY
+      const next = Math.min(maxH, Math.max(MIN_HEIGHT, st.startH + dy))
+      setHeight(next)
+    }
+    const onUp = () => {
+      dragRef.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+
+    document.body.style.cursor = 'ns-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [height])
 
   if (!execution) return null
 
   return (
-    <div className="orch-log-panel" ref={ref}>
+    <div className="orch-log-panel" style={collapsed ? undefined : { height }}>
+      {!collapsed && (
+        <div
+          className="orch-log-resize-handle"
+          onMouseDown={onDragStart}
+          role="separator"
+          aria-orientation="horizontal"
+          title="拖动调整高度"
+        />
+      )}
       <div className="orch-log-header" onClick={onToggle} style={{ cursor: 'pointer' }}>
         <h3>执行日志</h3>
         <span className={`orch-status-badge ${execution.status}`}>
@@ -70,7 +122,7 @@ export function LogPanel({
         {execution.endTime
           ? <span className="orch-log-duration">{((execution.endTime - execution.startTime) / 1000).toFixed(1)}s</span>
           : <span className="orch-log-duration">执行中...</span>}
-        <span style={{ marginLeft: 'auto', color: 'var(--fg-4)', fontSize: 10 }}>{collapsed ? '▼' : '▲'}</span>
+        <span style={{ marginLeft: 'auto', color: 'var(--fg-4)', fontSize: 10 }}>{collapsed ? '▲' : '▼'}</span>
       </div>
       {!collapsed && (
         <div className="orch-log-entries">

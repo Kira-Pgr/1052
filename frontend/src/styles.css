@@ -7590,26 +7590,46 @@ button.social-platform-card:hover {
   font-size: 12px;
 }
 
-/* Orchestration Log Panel */
+/* Orchestration Log Panel (embedded, resizable) */
 .orch-log-panel {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 50;
+  position: relative;
+  flex-shrink: 0;
   border: 1px solid var(--hairline);
-  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  border-radius: var(--r-lg);
   background: var(--surface-0);
   display: flex;
   flex-direction: column;
-  max-height: 60vh;
   overflow: hidden;
-  box-shadow: var(--sh-3);
-  animation: orch-log-slide-up 0.2s var(--ease);
+  box-shadow: var(--sh-2);
 }
-@keyframes orch-log-slide-up {
-  from { transform: translateY(100%); }
-  to { transform: translateY(0); }
+
+.orch-log-resize-handle {
+  height: 6px;
+  flex-shrink: 0;
+  cursor: ns-resize;
+  background: transparent;
+  position: relative;
+  user-select: none;
+  touch-action: none;
+}
+
+.orch-log-resize-handle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--hairline);
+  transition: background 0.15s var(--ease);
+}
+
+.orch-log-resize-handle:hover::before,
+.orch-log-resize-handle:active::before {
+  background: var(--accent, #6366f1);
+  width: 64px;
 }
 
 .orch-log-header {
@@ -7650,8 +7670,10 @@ button.social-platform-card:hover {
   flex-direction: column;
   gap: 8px;
   overflow-y: auto;
+  overflow-x: hidden;
   flex: 1;
   min-height: 0;
+  overscroll-behavior: contain;
 }
 
 .orch-log-entry {
@@ -7660,6 +7682,7 @@ button.social-platform-card:hover {
   background: var(--surface-1);
   overflow: hidden;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .orch-log-entry-header {
@@ -7669,6 +7692,11 @@ button.social-platform-card:hover {
   padding: 8px 12px;
   background: var(--surface-0);
   user-select: none;
+  flex-wrap: wrap;
+}
+
+.orch-log-entry-header > * {
+  flex-shrink: 0;
 }
 
 .orch-log-status-icon {
@@ -7690,7 +7718,11 @@ button.social-platform-card:hover {
 .orch-log-node-name {
   font-weight: 600;
   font-size: 12.5px;
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .orch-threshold-result {
@@ -7717,6 +7749,16 @@ button.social-platform-card:hover {
   border-radius: 4px;
   padding: 6px 8px;
   white-space: pre-wrap;
+  word-break: break-all;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.orch-log-sql > code {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .orch-log-detail {
@@ -7726,9 +7768,14 @@ button.social-platform-card:hover {
 
 .orch-log-result-table {
   width: 100%;
-  border-collapse: collapse;
   font-size: 12px;
   margin-top: 4px;
+  overflow-x: auto;
+}
+
+.orch-log-result-table table {
+  width: 100%;
+  border-collapse: collapse;
 }
 
 .orch-log-result-table th {
