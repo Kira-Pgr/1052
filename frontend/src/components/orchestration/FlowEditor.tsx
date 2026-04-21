@@ -24,7 +24,6 @@ const nodeTypes = {
 }
 
 function FlowEditorInner({
-  selectedNodeId,
   onSelectNode,
   editorHook,
 }: {
