@@ -13,6 +13,8 @@ import { SqlNode } from './nodes/SqlNode'
 import { DebugNode } from './nodes/DebugNode'
 import { LoadNode } from './nodes/LoadNode'
 import { WaitNode } from './nodes/WaitNode'
+import { CustomEdge } from './edges/CustomEdge'
+import { CustomConnectionLine } from './edges/CustomConnectionLine'
 import { useOrchestrationEditor } from './hooks/useOrchestrationEditor'
 import type { Orchestration } from '../../api/orchestration'
 
@@ -22,6 +24,8 @@ const nodeTypes = {
   load: LoadNode,
   wait: WaitNode,
 }
+
+const edgeTypes = { custom: CustomEdge }
 
 function FlowEditorInner({
   onSelectNode,
@@ -49,7 +53,9 @@ function FlowEditorInner({
         onConnect={onConnect}
         onSelectionChange={onSelectionChange}
         nodeTypes={nodeTypes}
-        defaultEdgeOptions={{ type: 'default' }}
+        edgeTypes={edgeTypes}
+        connectionLineComponent={CustomConnectionLine}
+        defaultEdgeOptions={{ type: 'custom' }}
         fitView
         snapToGrid
         snapGrid={[20, 20]}
